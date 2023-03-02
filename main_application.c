@@ -19,12 +19,15 @@
 #define R_BUF_SIZE (16)
 #define MAX_QUEUE_SIZE (16)
 #define QUEUE_MAX_TICKS_TO_WAIT (10)
+#define IDLE_TASK_PRIORITY (0)
 
 /* TASK PRIORITIES */
-#define	TASK_SERIAL_SEND_PRI		(2 + tskIDLE_PRIORITY)
-#define TASK_SERIAL_REC_PRI			(3 + tskIDLE_PRIORITY)
-#define	SERVICE_TASK_PRI			(1 + tskIDLE_PRIORITY)
-#define	DISPLAY_TASK_PRI			(4 + tskIDLE_PRIORITY)
+#define	TASK_SERIAL_SEND_PRI		(1 + IDLE_TASK_PRIORITY)
+#define TASK_SERIAL_REC_PRI			(6 + IDLE_TASK_PRIORITY)
+#define TASK_SERIAL_REC_PRI_PC	    (5 + IDLE_TASK_PRIORITY)
+#define	DISPLAY_TASK_PRI			(2 + IDLE_TASK_PRIORITY)
+#define	LED_TASK_PRI				(4 + IDLE_TASK_PRIORITY)
+#define	PC_TASK_PRI					(4 + IDLE_TASK_PRIORITY)
 
 /* TASKS: FORWARD DECLARATIONS */
 void led_blink(void* pvParameters);
@@ -118,19 +121,19 @@ uint32_t prvProcessRXInterrupt() {
 
 	if (get_RXC_status(COM_CH_0) != 0) {
 		if (xSemaphoreGiveFromISR(RX_BinarySemaphore_0, &higherPriorityTaskWoken) != pdTRUE) {
-			printf("Error\n");
+			printf("Error Channel 0\n");
 		}
 	}
 	if (get_RXC_status(COM_CH_1) != 0) {
 
 		if (xSemaphoreGiveFromISR(RX_BinarySemaphore_1, &higherPriorityTaskWoken) != pdTRUE) {
-			printf("Error\n");
+			printf("Error Channel 1\n");
 		}
 	}
 	if (get_RXC_status(COM_CH_PC) != 0) {
 
 		if (xSemaphoreGiveFromISR(RX_BinarySemaphore_PC, &higherPriorityTaskWoken) != pdTRUE) {
-			printf("Error\n");
+			printf("Error Channel 2\n");
 		}
 	}
 
@@ -209,24 +212,32 @@ void PC_control_Task(void* pvParameters) {
 				"CMIN1" = 5
 			*/
 
+			// printf("Received string from the queue is %s and the corresponding state is %d\n", msg, command);
+
 			switch (command) {
 			case 0:
 				start_stop = 1;
+				printf("Current state is START and the value of start_stop is %d\n", start_stop);
 				break;
 			case 1:
 				start_stop = 0;
+				printf("Current state is STOP and the value of start_stop is %d\n", start_stop);
 				break;
 			case 2:
 				left_sensor_max_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				printf("Current state is CMAX0 and the value of left_sensor_max_value is %d\n", left_sensor_max_value);
 				break;
 			case 3:
 				left_sensor_min_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				printf("Current state is CMIN0 and the value of left_sensor_min_value is %d\n", left_sensor_min_value);
 				break;
 			case 4:
 				right_sensor_max_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				printf("Current state is CMAX1 and the value of right_sensor_max_value is %d\n", right_sensor_max_value);
 				break;
 			case 5:
 				right_sensor_min_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				printf("Current state is CMIN1 and the value of right_sensor_min_value is %d\n", right_sensor_min_value);
 				break;
 			}
 		}
@@ -293,10 +304,10 @@ void SerialReceive_Task_PC(void* pvParameters)
 	{
 		xSemaphoreTake(RX_BinarySemaphore_PC, portMAX_DELAY);	// waiting for interrupt
 		get_serial_character(COM_CH_PC, &cc);			// recieiving data item
-		//printf("primio karakter: %u\n", (unsigned)cc);		// prikazuje primljeni karakter u cmd prompt
 		if (cc == 13) {
 			buffer[pointer] = 0;
 			pointer = 0;
+			printf("Received string is : %s\n", buffer);
 			xQueueSend(pc_comm_queue, (void*)buffer, (TickType_t)0);
 		}
 		else if (pointer < R_BUF_SIZE) {
@@ -387,8 +398,8 @@ static void TimerCallback( TimerHandle_t xTimer ) {
 	interval_range_0 = checkInterval(left_sensor, left_sensor_max_value, left_sensor_min_value);
 	interval_range_1 = checkInterval(right_sensor, right_sensor_max_value, right_sensor_min_value);
 
-	printf("Interval Range 0 is : %d    %d\n", interval_range_0, left_sensor);
-	printf("Interval Range 1 is : %d    %d\n", interval_range_1, right_sensor);
+	//printf("Interval Range 0 is : %d    %d\n", interval_range_0, left_sensor);
+	//printf("Interval Range 1 is : %d    %d\n", interval_range_1, right_sensor);
 
 	// Diodes for the left sensor //
 
@@ -508,12 +519,19 @@ void main_demo(void)
 
 	/* Create LED interrapt semaphore */
 	LED_BinarySemaphore_0 = xSemaphoreCreateBinary();
+	if (LED_BinarySemaphore_0 != NULL) printf("Semaphore LED_BinarySemaphore_0 successfully created!\n");
 	LED_BinarySemaphore_1 = xSemaphoreCreateBinary();
+	if (LED_BinarySemaphore_1 != NULL) printf("Semaphore LED_BinarySemaphore_1 successfully created!\n");
 	RX_BinarySemaphore_0 = xSemaphoreCreateBinary();
+	if (RX_BinarySemaphore_0 != NULL) printf("Semaphore RX_BinarySemaphore_0 successfully created!\n");
 	RX_BinarySemaphore_1 = xSemaphoreCreateBinary();
+	if (RX_BinarySemaphore_1 != NULL) printf("Semaphore RX_BinarySemaphore_1 successfully created!\n");
 	RX_BinarySemaphore_PC = xSemaphoreCreateBinary();
+	if (RX_BinarySemaphore_PC != NULL) printf("Semaphore RX_BinarySemaphore_PC successfully created!\n");
 	TX_BinarySemaphore_0 = xSemaphoreCreateBinary();
+	if (TX_BinarySemaphore_0 != NULL) printf("Semaphore TX_BinarySemaphore_0 successfully created!\n");
 	TX_BinarySemaphore_1 = xSemaphoreCreateBinary();
+	if (TX_BinarySemaphore_1 != NULL) printf("Semaphore TX_BinarySemaphore_1 successfully created!\n");
 
 	/* Queues */
 	rx2seg7_queue_0 = xQueueCreate(MAX_QUEUE_SIZE, R_BUF_SIZE);
@@ -570,27 +588,31 @@ void main_demo(void)
 	led_st_1_freq_2_Hz_8_ON.time_to_wait = 250;
 
 	/* led bar TASK */
-	if (xTaskCreate(led_blink, "LED_0_freq_1_Hz_1_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_0_freq_1_Hz_1_ON), DISPLAY_TASK_PRI, &led_tsk_0_freq_1_Hz_1_ON) != pdPASS)
+	if (xTaskCreate(led_blink, "LED_0_freq_1_Hz_1_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_0_freq_1_Hz_1_ON), LED_TASK_PRI, &led_tsk_0_freq_1_Hz_1_ON) != pdPASS)
 		printf("LED_0_freq_1_Hz_1_ON was not created!\n");
-	if(xTaskCreate(led_blink, "LED_0_freq_2_Hz_4_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_0_freq_2_Hz_4_ON), DISPLAY_TASK_PRI, &led_tsk_0_freq_2_Hz_4_ON) != pdPASS)
+	if(xTaskCreate(led_blink, "LED_0_freq_2_Hz_4_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_0_freq_2_Hz_4_ON), LED_TASK_PRI, &led_tsk_0_freq_2_Hz_4_ON) != pdPASS)
 		printf("LED_0_freq_2_Hz_4_ON was not created!\n");
-	if(xTaskCreate(led_blink, "LED_0_freq_2_Hz_8_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_0_freq_2_Hz_8_ON), DISPLAY_TASK_PRI, &led_tsk_0_freq_2_Hz_8_ON) != pdPASS)
+	if(xTaskCreate(led_blink, "LED_0_freq_2_Hz_8_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_0_freq_2_Hz_8_ON), LED_TASK_PRI, &led_tsk_0_freq_2_Hz_8_ON) != pdPASS)
 		printf("LED_0_freq_2_Hz_8_ON was not created!\n");
-	if(xTaskCreate(led_blink, "LED_1_freq_1_Hz_1_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_1_freq_1_Hz_1_ON), DISPLAY_TASK_PRI, &led_tsk_1_freq_1_Hz_1_ON) != pdPASS)
+	if(xTaskCreate(led_blink, "LED_1_freq_1_Hz_1_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_1_freq_1_Hz_1_ON), LED_TASK_PRI, &led_tsk_1_freq_1_Hz_1_ON) != pdPASS)
 		printf("LED_1_freq_1_Hz_1_ON was not created!\n");
-	if(xTaskCreate(led_blink, "LED_1_freq_2_Hz_4_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_1_freq_2_Hz_4_ON), DISPLAY_TASK_PRI, &led_tsk_1_freq_2_Hz_4_ON) != pdPASS)
+	if(xTaskCreate(led_blink, "LED_1_freq_2_Hz_4_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_1_freq_2_Hz_4_ON), LED_TASK_PRI, &led_tsk_1_freq_2_Hz_4_ON) != pdPASS)
 		printf("LED_1_freq_2_Hz_4_ON was not created!\n");
-	if(xTaskCreate(led_blink, "LED_1_freq_2_Hz_8_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_1_freq_2_Hz_8_ON), DISPLAY_TASK_PRI, &led_tsk_1_freq_2_Hz_8_ON) != pdPASS)
+	if(xTaskCreate(led_blink, "LED_1_freq_2_Hz_8_ON", configMINIMAL_STACK_SIZE, (void*)(&led_st_1_freq_2_Hz_8_ON), LED_TASK_PRI, &led_tsk_1_freq_2_Hz_8_ON) != pdPASS)
 		printf("LED_1_freq_2_Hz_8_ON was not created!\n");
 
 	/* SERIAL RECEIVER TASK */
 	xTaskCreate(SerialReceive_Task, "SensorRx_CH0", configMINIMAL_STACK_SIZE, (void*)(&rx_packet_channel_0), TASK_SERIAL_REC_PRI, NULL);
 	xTaskCreate(SerialReceive_Task, "SensorRx_CH1", configMINIMAL_STACK_SIZE, (void*)(&rx_packet_channel_1), TASK_SERIAL_REC_PRI, NULL);
+	xTaskCreate(SerialReceive_Task_PC, "PC_Rx", configMINIMAL_STACK_SIZE, (void*)0, TASK_SERIAL_REC_PRI_PC, NULL);
 	/* SERIAL TRANSMITTER TASK */
 	xTaskCreate(SerialSend_Task, "SensorTx_CH0", configMINIMAL_STACK_SIZE, (void*)(&tx_packet_channel_0), TASK_SERIAL_SEND_PRI, NULL);
 	xTaskCreate(SerialSend_Task, "SensorTx_CH1", configMINIMAL_STACK_SIZE, (void*)(&tx_packet_channel_1), TASK_SERIAL_SEND_PRI, NULL);
+	xTaskCreate(SerialSend_Task_PC, "PC_Tx", configMINIMAL_STACK_SIZE, (void*)0, TASK_SERIAL_SEND_PRI, NULL);
 	/* PROCESSING TASKS */
 	xTaskCreate(ShowDataOn7Seg, "7SegDisplay", configMINIMAL_STACK_SIZE, (void*)0, DISPLAY_TASK_PRI, NULL);
+	xTaskCreate(PC_control_Task, "PC_Control", configMINIMAL_STACK_SIZE, (void*)0, PC_TASK_PRI, NULL);
+
 	
 
 	/* Timers */
