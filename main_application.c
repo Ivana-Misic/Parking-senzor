@@ -15,13 +15,10 @@
 /* SERIAL SIMULATOR CHANNEL */
 #define COM_CH_0 (0)
 #define COM_CH_1 (1)
+#define COM_CH_PC (2)
 #define R_BUF_SIZE (16)
 #define MAX_QUEUE_SIZE (16)
 #define QUEUE_MAX_TICKS_TO_WAIT (10)
-
-/* Temporary constants */
-#define MAX_SENSOR_VALUE (80)
-#define MIN_SENSOR_VALUE (10)
 
 /* TASK PRIORITIES */
 #define	TASK_SERIAL_SEND_PRI		(2 + tskIDLE_PRIORITY)
@@ -32,19 +29,28 @@
 /* TASKS: FORWARD DECLARATIONS */
 void led_blink(void* pvParameters);
 void SerialSend_Task(void* pvParameters);
+void SerialSend_Task_PC(void* pvParameters);
 void SerialReceive_Task(void* pvParameters);
+void SerialReceive_Task_PC(void* pvParameters);
 void ShowDataOn7Seg(void* pvParameters);
+void PC_control_Task(void* pvParameters);
 //void updateGlobalSensorValues(void* pvParameters);
 
 /* Helper functions */
-uint8_t checkInterval(uint8_t value);
+uint8_t checkInterval(uint8_t value, uint8_t max, uint8_t min);
+uint8_t assignValueToFSMState(char* msg);
 
 /* TRASNMISSION DATA - CONSTANT IN THIS APPLICATION */
 const char trigger[] = "S";
 
-/* Gloabal variables containging read-only data from sensors */
+/* Gloabal variables */
 uint8_t left_sensor = 0;
 uint8_t right_sensor = 0;
+uint8_t start_stop = 0;
+uint8_t left_sensor_max_value = 0;
+uint8_t left_sensor_min_value = 0;
+uint8_t right_sensor_max_value = 0;
+uint8_t right_sensor_min_value = 0;
 
 /* RECEPTION DATA BUFFER */
 //uint8_t rx_buffer_ch_0[R_BUF_SIZE];
@@ -81,9 +87,13 @@ SemaphoreHandle_t TX_BinarySemaphore_0;
 SemaphoreHandle_t TX_BinarySemaphore_1;
 SemaphoreHandle_t RX_BinarySemaphore_0;
 SemaphoreHandle_t RX_BinarySemaphore_1;
+SemaphoreHandle_t RX_BinarySemaphore_PC;
 TimerHandle_t tH0;
+TimerHandle_t tH1;
 QueueHandle_t rx2seg7_queue_0;
 QueueHandle_t rx2seg7_queue_1;
+QueueHandle_t pc_comm_queue;
+QueueHandle_t pc_tx_queue;
 xTaskHandle led_tsk_0_freq_1_Hz_1_ON;
 xTaskHandle led_tsk_0_freq_2_Hz_4_ON;
 xTaskHandle led_tsk_0_freq_2_Hz_8_ON;
@@ -117,17 +127,23 @@ uint32_t prvProcessRXInterrupt() {
 			printf("Error\n");
 		}
 	}
+	if (get_RXC_status(COM_CH_PC) != 0) {
+
+		if (xSemaphoreGiveFromISR(RX_BinarySemaphore_PC, &higherPriorityTaskWoken) != pdTRUE) {
+			printf("Error\n");
+		}
+	}
 
 	portYIELD_FROM_ISR(higherPriorityTaskWoken);
 }
 
-uint8_t checkInterval(uint8_t value) {
+uint8_t checkInterval(uint8_t value, uint8_t max, uint8_t min) {
 
-	uint8_t scaled_max = (uint8_t)MAX_SENSOR_VALUE - (uint8_t)MIN_SENSOR_VALUE;
+	uint8_t scaled_max = max - min;
 	uint8_t half_val = (uint8_t)((float)(scaled_max) * 0.5);
-	uint8_t scaled_value = value - (uint8_t)MIN_SENSOR_VALUE;
+	uint8_t scaled_value = value - min;
 
-	if (value < (uint8_t)MIN_SENSOR_VALUE) {
+	if (value < min) {
 		return 0;
 	}
 	else if (scaled_value < half_val) {
@@ -140,16 +156,100 @@ uint8_t checkInterval(uint8_t value) {
 		return 3;
 }
 
+uint8_t assignValueToFSMState(char* str) {
+
+	/*
+		"START"	= 0 
+		"STOP_" = 1
+		"CMAX0" = 2
+		"CMIN0" = 3
+		"CMAX1" = 4
+		"CMIN1" = 5
+	*/
+
+	char msg[6] = {str[0], str[1], str[2], str[3], str[4], 0};
+
+	if (!strcmp(msg, "START")) {
+		return 0;
+	}
+	if (!strcmp(msg, "STOP_")) {
+		return 1;
+	}
+	if (!strcmp(msg, "CMAX0")) {
+		return 2;
+	}
+	if (!strcmp(msg, "CMIN0")) {
+		return 3;
+	}
+	if (!strcmp(msg, "CMAX1")) {
+		return 4;
+	}
+	if (!strcmp(msg, "CMIN1")) {
+		return 5;
+	}
+	return 1;
+}
+
+void PC_control_Task(void* pvParameters) {
+
+	char msg[R_BUF_SIZE];
+	uint8_t command = 1;
+
+	while (1) {
+
+		if (xQueueReceive(pc_comm_queue, msg, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS) {
+			command = assignValueToFSMState(msg);
+
+			/*
+				"START"	= 0
+				"STOP_" = 1
+				"CMAX0" = 2
+				"CMIN0" = 3
+				"CMAX1" = 4
+				"CMIN1" = 5
+			*/
+
+			switch (command) {
+			case 0:
+				start_stop = 1;
+				break;
+			case 1:
+				start_stop = 0;
+				break;
+			case 2:
+				left_sensor_max_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				break;
+			case 3:
+				left_sensor_min_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				break;
+			case 4:
+				right_sensor_max_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				break;
+			case 5:
+				right_sensor_min_value = 10 * (msg[5] - 48) + (msg[6] - 48);
+				break;
+			}
+		}
+
+	}
+}
+
 void led_blink(void* pvParameters) {
 
 	t_LED* led_st = (t_LED*)pvParameters;
 	uint8_t LED_value;
 
 	while (1) {
-		get_LED_BAR(led_st->led_select, &LED_value);
-		LED_value = (~LED_value) & led_st->mask;
-		set_LED_BAR(led_st->led_select, LED_value);
-		vTaskDelay(pdMS_TO_TICKS(led_st->time_to_wait));		// Wait for 500 ms
+
+		if (start_stop) {
+			get_LED_BAR(led_st->led_select, &LED_value);
+			LED_value = (~LED_value) & led_st->mask;
+			set_LED_BAR(led_st->led_select, LED_value);
+			vTaskDelay(pdMS_TO_TICKS(led_st->time_to_wait));		// Wait for 500 ms
+		}
+		else {
+			set_LED_BAR(led_st->led_select, 0x00);
+		}
 	}
 }
 
@@ -183,6 +283,28 @@ void SerialReceive_Task(void* pvParameters)
 	}
 }
 
+void SerialReceive_Task_PC(void* pvParameters)
+{
+	uint8_t cc = 0;
+	uint8_t pointer = 0;
+	char buffer[R_BUF_SIZE];
+
+	for (;;)
+	{
+		xSemaphoreTake(RX_BinarySemaphore_PC, portMAX_DELAY);	// waiting for interrupt
+		get_serial_character(COM_CH_PC, &cc);			// recieiving data item
+		//printf("primio karakter: %u\n", (unsigned)cc);		// prikazuje primljeni karakter u cmd prompt
+		if (cc == 13) {
+			buffer[pointer] = 0;
+			pointer = 0;
+			xQueueSend(pc_comm_queue, (void*)buffer, (TickType_t)0);
+		}
+		else if (pointer < R_BUF_SIZE) {
+			buffer[pointer++] = cc;
+		}
+	}
+}
+
 void SerialSend_Task(void* pvParameters)
 {
 	uint8_t t_point = 0;
@@ -198,27 +320,53 @@ void SerialSend_Task(void* pvParameters)
 	}
 }
 
+void SerialSend_Task_PC(void* pvParameters) {
+	
+	char msg[8];
+	int i;
+
+	while (1) {
+		if (xQueueReceive(pc_tx_queue, msg, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS) {
+			for (i = 0; i < 8; i++) {
+				send_serial_character(COM_CH_PC, msg[i]);
+			}
+		}
+	}
+}
+
 void ShowDataOn7Seg(void* pvParameters) {
 
 	char msg_0[R_BUF_SIZE];
 	char msg_1[R_BUF_SIZE];
 
 	for (;;) {
-		if (xQueueReceive(rx2seg7_queue_0, msg_0, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS)	{
-			if (xQueueReceive(rx2seg7_queue_1, msg_1, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS) {
+		if(start_stop) {
+			if (xQueueReceive(rx2seg7_queue_0, msg_0, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS) {
+				if (xQueueReceive(rx2seg7_queue_1, msg_1, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS) {
 
-				//printf("%c%c\n", msg_0[0], msg_0[1]);
-				//printf("%c%c\n", msg_1[0], msg_1[1]);
+					//printf("%c%c\n", msg_0[0], msg_0[1]);
+					//printf("%c%c\n", msg_1[0], msg_1[1]);
 
-				select_7seg_digit(0);
-				set_7seg_digit(hexnum[msg_0[0] - 48]);
-				select_7seg_digit(1);
-				set_7seg_digit(hexnum[msg_0[1] - 48]);
-				select_7seg_digit(2);
-				set_7seg_digit(hexnum[msg_1[0] - 48]);
-				select_7seg_digit(3);
-				set_7seg_digit(hexnum[msg_1[1] - 48]);
+					select_7seg_digit(0);
+					set_7seg_digit(hexnum[msg_0[0] - 48]);
+					select_7seg_digit(1);
+					set_7seg_digit(hexnum[msg_0[1] - 48]);
+					select_7seg_digit(2);
+					set_7seg_digit(hexnum[msg_1[0] - 48]);
+					select_7seg_digit(3);
+					set_7seg_digit(hexnum[msg_1[1] - 48]);
+				}
 			}
+		}
+		else {
+			select_7seg_digit(0);
+			set_7seg_digit(0x40);
+			select_7seg_digit(1);
+			set_7seg_digit(0x40);
+			select_7seg_digit(2);
+			set_7seg_digit(0x40);
+			select_7seg_digit(3);
+			set_7seg_digit(0x40);
 		}
 	}
 }
@@ -236,8 +384,8 @@ static void TimerCallback( TimerHandle_t xTimer ) {
 
 	// printf("%d\n", timer_0);
 
-	interval_range_0 = checkInterval(left_sensor);
-	interval_range_1 = checkInterval(right_sensor);
+	interval_range_0 = checkInterval(left_sensor, left_sensor_max_value, left_sensor_min_value);
+	interval_range_1 = checkInterval(right_sensor, right_sensor_max_value, right_sensor_min_value);
 
 	printf("Interval Range 0 is : %d    %d\n", interval_range_0, left_sensor);
 	printf("Interval Range 1 is : %d    %d\n", interval_range_1, right_sensor);
@@ -306,6 +454,38 @@ static void TimerCallback( TimerHandle_t xTimer ) {
 
 }
 
+static void TimerCallback_PC(TimerHandle_t xTimer){
+	
+	char msg_left_sensor[R_BUF_SIZE];
+	char msg_right_sensor[R_BUF_SIZE];
+	uint8_t interval_left, interval_right;
+
+	msg_left_sensor[0] = 'L';
+	msg_left_sensor[1] = ':';
+	msg_left_sensor[2] = ' ';
+	msg_left_sensor[4] = ' ';
+	msg_right_sensor[0] = 'R';
+	msg_right_sensor[1] = ':';
+	msg_right_sensor[2] = ' ';
+	msg_right_sensor[4] = ' ';
+
+	interval_left = checkInterval(left_sensor, left_sensor_max_value, left_sensor_min_value);
+	interval_right = checkInterval(right_sensor, right_sensor_max_value, right_sensor_min_value);
+
+	msg_left_sensor[3] = interval_left + 48;
+	msg_right_sensor[3] = interval_right + 48;
+	msg_left_sensor[5] = (left_sensor / 10) + 48;
+	msg_right_sensor[5] = (right_sensor / 10) + 48;
+	msg_left_sensor[6] = (left_sensor % 10) + 48;
+	msg_right_sensor[6] = (right_sensor % 10) + 48;
+	msg_left_sensor[7] = '\n';
+	msg_right_sensor[7] = '\n';
+
+	xQueueSend(pc_tx_queue, (void*)msg_left_sensor, (TickType_t)0);
+	xQueueSend(pc_tx_queue, (void*)msg_right_sensor, (TickType_t)0);
+
+}
+
 /* MAIN - SYSTEM STARTUP POINT */
 void main_demo(void)
 {
@@ -317,6 +497,8 @@ void main_demo(void)
 	init_serial_downlink(COM_CH_0);			// Initializing Rx for channel 0
 	init_serial_uplink(COM_CH_1);			// Initializing Tx for channel 1
 	init_serial_downlink(COM_CH_1);			// Initializing Rx for channel 1
+	init_serial_uplink(COM_CH_PC);			// Initializing Tx for channel 2
+	init_serial_downlink(COM_CH_PC);		// Initializing Rx for channel 2
 	init_7seg_comm();						// Initializing 7seg display
 
 	/* ON INPUT CHANGE INTERRUPT HANDLER */
@@ -329,12 +511,15 @@ void main_demo(void)
 	LED_BinarySemaphore_1 = xSemaphoreCreateBinary();
 	RX_BinarySemaphore_0 = xSemaphoreCreateBinary();
 	RX_BinarySemaphore_1 = xSemaphoreCreateBinary();
+	RX_BinarySemaphore_PC = xSemaphoreCreateBinary();
 	TX_BinarySemaphore_0 = xSemaphoreCreateBinary();
 	TX_BinarySemaphore_1 = xSemaphoreCreateBinary();
 
 	/* Queues */
 	rx2seg7_queue_0 = xQueueCreate(MAX_QUEUE_SIZE, R_BUF_SIZE);
 	rx2seg7_queue_1 = xQueueCreate(MAX_QUEUE_SIZE, R_BUF_SIZE);
+	pc_comm_queue = xQueueCreate(MAX_QUEUE_SIZE, R_BUF_SIZE);
+	pc_tx_queue = xQueueCreate(MAX_QUEUE_SIZE, R_BUF_SIZE);
 
 	/* Packets to be sent */
 	tx_packet tx_packet_channel_0;
@@ -410,13 +595,22 @@ void main_demo(void)
 
 	/* Timers */
 	tH0 = xTimerCreate(
-		"Timer",
+		"Timer_0",
 		pdMS_TO_TICKS(5),
 		pdTRUE,
 		0,
 		TimerCallback
 	);
+
+	tH1 = xTimerCreate(
+		"Timer_1",
+		pdMS_TO_TICKS(5000),
+		pdTRUE,
+		0,
+		TimerCallback_PC
+	);
 	 
 	xTimerStart(tH0, 0);
+	xTimerStart(tH1, 0);
 	vTaskStartScheduler();
 }
