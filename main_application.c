@@ -55,10 +55,6 @@ uint8_t left_sensor_min_value = 0;
 uint8_t right_sensor_max_value = 0;
 uint8_t right_sensor_min_value = 0;
 
-/* RECEPTION DATA BUFFER */
-//uint8_t rx_buffer_ch_0[R_BUF_SIZE];
-//unsigned volatile r_point;
-
 /* 7-SEG NUMBER DATABASE - ALL HEX DIGITS */
 static const unsigned char hexnum[] = { 0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07,
 										0x7F, 0x6F, 0x77, 0x7C, 0x39, 0x5E, 0x79, 0x71 };
@@ -105,14 +101,18 @@ xTaskHandle led_tsk_1_freq_2_Hz_4_ON;
 xTaskHandle led_tsk_1_freq_2_Hz_8_ON;
 
 // ISR - signals that an input LED has been switched off or on
-//uint32_t OnLED_ChangeInterrupt() {
-//
-//	BaseType_t higherPriorityTaskWoken = pdFALSE;
-//
-//	xSemaphoreGiveFromISR(LED_BinarySemaphore, &higherPriorityTaskWoken);
-//
-//	portYIELD_FROM_ISR(higherPriorityTaskWoken);
-//}
+uint32_t OnLED_ChangeInterrupt() {
+	uint8_t LED_value;
+	get_LED_BAR(0, &LED_value);
+	if (LED_value & 0x01) {
+		start_stop = 1;
+		printf("The system has been started by using an LED");
+	}
+	else {
+		start_stop = 0;
+		printf("The system has been stopped by using an LED");
+	}
+}
 
 // ISR - signals that a new message has arrived
 uint32_t prvProcessRXInterrupt() {
@@ -385,6 +385,7 @@ void ShowDataOn7Seg(void* pvParameters) {
 static void TimerCallback( TimerHandle_t xTimer ) {
 
 	static uint8_t timer_0 = 0;
+	static uint8_t previous_interval_0, previous_interval_1;
 	uint8_t interval_range_0, interval_range_1;
 	
 	if (timer_0++ > 39) {
@@ -400,6 +401,9 @@ static void TimerCallback( TimerHandle_t xTimer ) {
 
 	//printf("Interval Range 0 is : %d    %d\n", interval_range_0, left_sensor);
 	//printf("Interval Range 1 is : %d    %d\n", interval_range_1, right_sensor);
+
+	if (previous_interval_0 != interval_range_0) set_LED_BAR(1, 0x00);
+	if (previous_interval_1 != interval_range_1) set_LED_BAR(2, 0x00);
 
 	// Diodes for the left sensor //
 
@@ -462,6 +466,9 @@ static void TimerCallback( TimerHandle_t xTimer ) {
 		vTaskSuspend(led_tsk_1_freq_2_Hz_4_ON);
 		vTaskSuspend(led_tsk_1_freq_2_Hz_8_ON);
 	}
+
+	previous_interval_0 = interval_range_0;
+	previous_interval_1 = interval_range_1;
 
 }
 
@@ -612,8 +619,6 @@ void main_demo(void)
 	/* PROCESSING TASKS */
 	xTaskCreate(ShowDataOn7Seg, "7SegDisplay", configMINIMAL_STACK_SIZE, (void*)0, DISPLAY_TASK_PRI, NULL);
 	xTaskCreate(PC_control_Task, "PC_Control", configMINIMAL_STACK_SIZE, (void*)0, PC_TASK_PRI, NULL);
-
-	
 
 	/* Timers */
 	tH0 = xTimerCreate(
