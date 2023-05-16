@@ -26,7 +26,7 @@
 #define TASK_SERIAL_REC_PRI			(6 + IDLE_TASK_PRIORITY)
 #define TASK_SERIAL_REC_PRI_PC	    (5 + IDLE_TASK_PRIORITY)
 #define	DISPLAY_TASK_PRI			(2 + IDLE_TASK_PRIORITY)
-#define	LED_TASK_PRI				(4 + IDLE_TASK_PRIORITY)
+#define	LED_TASK_PRI				(3 + IDLE_TASK_PRIORITY)
 #define	PC_TASK_PRI					(4 + IDLE_TASK_PRIORITY)
 
 /* TASKS: FORWARD DECLARATIONS */
@@ -37,14 +37,13 @@ void SerialReceive_Task(void* pvParameters);
 void SerialReceive_Task_PC(void* pvParameters);
 void ShowDataOn7Seg(void* pvParameters);
 void PC_control_Task(void* pvParameters);
-//void updateGlobalSensorValues(void* pvParameters);
 
 /* Helper functions */
 uint8_t checkInterval(uint8_t value, uint8_t max, uint8_t min);
 uint8_t assignValueToFSMState(char* msg);
 
 /* TRASNMISSION DATA - CONSTANT IN THIS APPLICATION */
-const char trigger[] = "S";
+const char trigger[] = "s";
 
 /* Gloabal variables */
 uint8_t left_sensor = 0;
@@ -106,15 +105,15 @@ uint32_t OnLED_ChangeInterrupt() {
 	get_LED_BAR(0, &LED_value);
 	if (LED_value & 0x01) {
 		start_stop = 1;
-		printf("The system has been started by using an LED");
+		printf("The system has been started by using an LED\n");
 	}
 	else {
 		start_stop = 0;
-		printf("The system has been stopped by using an LED");
+		printf("The system has been stopped by using an LED\n");
 	}
 }
 
-// ISR - signals that a new message has arrived
+/* ISR - signals that a new message has arrived */
 uint32_t prvProcessRXInterrupt() {
 
 	BaseType_t higherPriorityTaskWoken = pdFALSE;
@@ -142,17 +141,22 @@ uint32_t prvProcessRXInterrupt() {
 
 uint8_t checkInterval(uint8_t value, uint8_t max, uint8_t min) {
 
-	uint8_t scaled_max = max - min;
-	uint8_t half_val = (uint8_t)((float)(scaled_max) * 0.5);
-	uint8_t scaled_value = value - min;
+	/* min = 10
+	   max = 80
+	   half_val = 35 + 10 = 45
+	   value = 68
+	*/
+	uint8_t half_val = max - min;
+	half_val = half_val / 2;
+	half_val += min;
 
 	if (value < min) {
 		return 0;
 	}
-	else if (scaled_value < half_val) {
+	else if (value < half_val) {
 		return 1;
 	}
-	else if (scaled_value < scaled_max) {
+	else if (value < max) {
 		return 2;
 	}
 	else
@@ -212,8 +216,6 @@ void PC_control_Task(void* pvParameters) {
 				"CMIN1" = 5
 			*/
 
-			// printf("Received string from the queue is %s and the corresponding state is %d\n", msg, command);
-
 			switch (command) {
 			case 0:
 				start_stop = 1;
@@ -256,7 +258,7 @@ void led_blink(void* pvParameters) {
 			get_LED_BAR(led_st->led_select, &LED_value);
 			LED_value = (~LED_value) & led_st->mask;
 			set_LED_BAR(led_st->led_select, LED_value);
-			vTaskDelay(pdMS_TO_TICKS(led_st->time_to_wait));		// Wait for 500 ms
+			vTaskDelay(pdMS_TO_TICKS(led_st->time_to_wait));
 		}
 		else {
 			set_LED_BAR(led_st->led_select, 0x00);
@@ -273,9 +275,9 @@ void SerialReceive_Task(void* pvParameters)
 
 	for (;;)
 	{
-		xSemaphoreTake(*(packet->sempahore), portMAX_DELAY);	// waiting for interrupt
-		get_serial_character(packet->channel_num, &cc);			// recieiving data item
-		//printf("primio karakter: %u\n", (unsigned)cc);		// prikazuje primljeni karakter u cmd prompt
+		xSemaphoreTake(*(packet->sempahore), portMAX_DELAY);	/* waiting for interrupt */
+		get_serial_character(packet->channel_num, &cc);			/* recieiving data item */
+
 		if (cc == 13) {
 			buffer[pointer] = 0;
 			pointer = 0;
@@ -302,8 +304,8 @@ void SerialReceive_Task_PC(void* pvParameters)
 
 	for (;;)
 	{
-		xSemaphoreTake(RX_BinarySemaphore_PC, portMAX_DELAY);	// waiting for interrupt
-		get_serial_character(COM_CH_PC, &cc);			// recieiving data item
+		xSemaphoreTake(RX_BinarySemaphore_PC, portMAX_DELAY);	/* waiting for interrupt */
+		get_serial_character(COM_CH_PC, &cc);					/* recieiving data item */
 		if (cc == 13) {
 			buffer[pointer] = 0;
 			pointer = 0;
@@ -323,9 +325,9 @@ void SerialSend_Task(void* pvParameters)
 
 	for (;;)
 	{
-		xSemaphoreTake(*(packet->sempahore), portMAX_DELAY);						// waiting for timer to update the semaphore
+		xSemaphoreTake(*(packet->sempahore), portMAX_DELAY);						/* waiting for timer to update the semaphore */
 
-		for (t_point = 0; t_point < sizeof(trigger); t_point++) {					// Sending the message
+		for (t_point = 0; t_point < sizeof(trigger); t_point++) {					/* Sending the message */
 			send_serial_character(packet->channel_num, trigger[t_point++]);
 		}
 	}
@@ -354,9 +356,6 @@ void ShowDataOn7Seg(void* pvParameters) {
 		if(start_stop) {
 			if (xQueueReceive(rx2seg7_queue_0, msg_0, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS) {
 				if (xQueueReceive(rx2seg7_queue_1, msg_1, (TickType_t)QUEUE_MAX_TICKS_TO_WAIT) == pdPASS) {
-
-					//printf("%c%c\n", msg_0[0], msg_0[1]);
-					//printf("%c%c\n", msg_1[0], msg_1[1]);
 
 					select_7seg_digit(0);
 					set_7seg_digit(hexnum[msg_0[0] - 48]);
@@ -389,41 +388,36 @@ static void TimerCallback( TimerHandle_t xTimer ) {
 	uint8_t interval_range_0, interval_range_1;
 	
 	if (timer_0++ > 39) {
-		xSemaphoreGive(TX_BinarySemaphore_0);	// Serial Communication Channel 0
-		xSemaphoreGive(TX_BinarySemaphore_1);	// Serial Communication Channel 1
+		xSemaphoreGive(TX_BinarySemaphore_0);	/* Serial Communication Channel 0 */
+		xSemaphoreGive(TX_BinarySemaphore_1);	/* Serial Communication Channel 1 */
 		timer_0 = 0;
 	}
-
-	// printf("%d\n", timer_0);
 
 	interval_range_0 = checkInterval(left_sensor, left_sensor_max_value, left_sensor_min_value);
 	interval_range_1 = checkInterval(right_sensor, right_sensor_max_value, right_sensor_min_value);
 
-	//printf("Interval Range 0 is : %d    %d\n", interval_range_0, left_sensor);
-	//printf("Interval Range 1 is : %d    %d\n", interval_range_1, right_sensor);
-
 	if (previous_interval_0 != interval_range_0) set_LED_BAR(1, 0x00);
 	if (previous_interval_1 != interval_range_1) set_LED_BAR(2, 0x00);
 
-	// Diodes for the left sensor //
+	/* Diodes for the left sensor */
 
 	switch (interval_range_0) {
-	case 0:	// value < MIN 
+	case 0:	/* value < MIN */
 		vTaskSuspend(led_tsk_0_freq_1_Hz_1_ON);
 		vTaskSuspend(led_tsk_0_freq_2_Hz_4_ON);
 		vTaskResume(led_tsk_0_freq_2_Hz_8_ON);
 		break;
-	case 1:	// MIN < value < HALF
+	case 1:	/* MIN < value < HALF */
 		vTaskSuspend(led_tsk_0_freq_1_Hz_1_ON);
 		vTaskResume(led_tsk_0_freq_2_Hz_4_ON);
 		vTaskSuspend(led_tsk_0_freq_2_Hz_8_ON);
 		break;
-	case 2:	// HALF < value < MAX
+	case 2:	/* HALF < value < MAX */
 		vTaskResume(led_tsk_0_freq_1_Hz_1_ON);
 		vTaskSuspend(led_tsk_0_freq_2_Hz_4_ON);
 		vTaskSuspend(led_tsk_0_freq_2_Hz_8_ON);
 		break;
-	case 3: // MAX < value
+	case 3: /* MAX < value */
 		set_LED_BAR(1, 0x00);
 		vTaskSuspend(led_tsk_0_freq_1_Hz_1_ON);
 		vTaskSuspend(led_tsk_0_freq_2_Hz_4_ON);
@@ -436,7 +430,7 @@ static void TimerCallback( TimerHandle_t xTimer ) {
 		vTaskSuspend(led_tsk_0_freq_2_Hz_8_ON);
 	}
 
-	// Diodes for the right sensor //
+	/* Diodes for the right sensor */
 
 	switch (interval_range_1) {
 	case 0:
@@ -508,19 +502,19 @@ static void TimerCallback_PC(TimerHandle_t xTimer){
 void main_demo(void)
 {
 	
-	init_LED_comm();						// Initializing LED bar
-	set_LED_BAR(1, 0x00);					// Switching off all of the output LEDs
-	set_LED_BAR(2, 0x00);					// Switching off all of the output LEDs
-	init_serial_uplink(COM_CH_0);			// Initializing Tx for channel 0
-	init_serial_downlink(COM_CH_0);			// Initializing Rx for channel 0
-	init_serial_uplink(COM_CH_1);			// Initializing Tx for channel 1
-	init_serial_downlink(COM_CH_1);			// Initializing Rx for channel 1
-	init_serial_uplink(COM_CH_PC);			// Initializing Tx for channel 2
-	init_serial_downlink(COM_CH_PC);		// Initializing Rx for channel 2
-	init_7seg_comm();						// Initializing 7seg display
+	init_LED_comm();						/* Initializing LED bar */
+	set_LED_BAR(1, 0x00);					/* Switching off all of the output LEDs */
+	set_LED_BAR(2, 0x00);					/* Switching off all of the output LEDs */
+	init_serial_uplink(COM_CH_0);			/* Initializing Tx for channel 0 */
+	init_serial_downlink(COM_CH_0);			/* Initializing Rx for channel 0 */
+	init_serial_uplink(COM_CH_1);			/* Initializing Tx for channel 1 */
+	init_serial_downlink(COM_CH_1);			/* Initializing Rx for channel 1 */
+	init_serial_uplink(COM_CH_PC);			/* Initializing Tx for channel 2 */
+	init_serial_downlink(COM_CH_PC);		/* Initializing Rx for channel 2 */
+	init_7seg_comm();						/* Initializing 7seg display */
 
 	/* ON INPUT CHANGE INTERRUPT HANDLER */
-	// vPortSetInterruptHandler(portINTERRUPT_SRL_OIC, OnLED_ChangeInterrupt);
+	vPortSetInterruptHandler(portINTERRUPT_SRL_OIC, OnLED_ChangeInterrupt);
 	/* SERIAL RECEPTION INTERRUPT HANDLER */
 	vPortSetInterruptHandler(portINTERRUPT_SRL_RXC, prvProcessRXInterrupt);
 
